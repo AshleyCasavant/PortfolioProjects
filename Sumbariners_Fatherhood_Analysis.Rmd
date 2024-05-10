@@ -1,0 +1,435 @@
+---
+title: "Analysis on Whether Submariners Are More Likely to Father Girls"
+author: "Ashley Casavant"
+date: "2024-04-23"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r, echo = FALSE, eval = TRUE, include=FALSE}
+# getting data
+library(readxl)
+data <- read_excel("dataset48.xlsx")
+data.df <- as.data.frame(data)
+head(data.df)
+```
+
+## Introduction
+
+There exists a common belief among many members of the United States Navy that male submariners are more likely to father girls than they are boys, deviating from the general knowledge that sex ratios of breeding populations tend to be very close to 50/50.  There have been many hypothesis as to why Navy sumbariners may be more likely to father girls, from exposure to a different atmospheric composition on the submarine to irregular and limited sleep schedules.  To test if there is truly a greater probability of a Navy submariner to father a girl than a boy, researchers at Bathesda Naval Hospital sent a survey out to 6 different submarine bases to gather information on whether a submariner had a child in the past year, the sex at birth of that child, and several other demographic and environmental questions.  There were 1000 survey responses to be studied. 
+
+A truncated version of the survey responses can be seen below: 
+
+#### Figure 1: Survey Responses Head
+```{r, echo=FALSE, eval=TRUE, include=FALSE}
+data.df$time_in_service_stan <- (data.df$time_in_service - mean(data.df[,5])) / sd(data.df[,5])
+
+data.df$sea_stan <- (data.df$sea - mean(data.df[,1])) / sd(data.df[,1])
+
+data.df$BN_stan <- (data.df$BN - mean(data.df[,2])) / sd(data.df[,2])
+
+data.df$engineering_stan <- (data.df$engineering - mean(data.df[,3])) / sd(data.df[,3])
+
+data.df$weaps_stan <- (data.df$weaps - mean(data.df[,4])) / sd(data.df[,4])
+
+```
+
+```{r, echo = FALSE}
+head(data.df, n=4)
+```
+
+The 'sea' variable is a binary indicator of whether a submariner is currently assigned to be working on a submarine (sea = 1).  Typically, submariners serve on a vessel for 2-3 years and then have a 1-2 year rotation on shore.
+
+The 'BN' variable is a binary indicator where BN = 1 indicates that a submariner is either currently assigned to, or his last assignment was on a ballistic missile submarine.  
+
+The 'engineering' variable is a binary indicator where a value of 1 indicates that a submariner worked with the nuclear reactor of a submarine either currently, or on his most recent rotation. 
+
+The 'weaps' variable is a binary indicator where a value of 1 indicates that the sailor works directly on nuclear weapons either currently or on his most recent assignment if not currently stationed on a vessel. 
+
+The 'time_in_service' variable is the time in years that a sailor has been in submarine service. 
+
+The 'girl' variable is a binary indicator where girl = 1 indicates that the sailor's child is a girl. 
+
+As with many surveys, there may be some self-selection bias present, as sailors were able to choose whether or not they wanted to participate in the survey.  Furthermore, there may be other factors that this survey did not account for such as average hours of sleep per night, or asking sailors to rank their average stress levels on some quantifiable scale.  These factors may also affect a sailor's production of sperm, and therefore could contribute to their probability of fathering a girl. 
+
+## Exploratory Analysis
+
+```{r, echo = FALSE, eval = TRUE, include=FALSE}
+nrow(data.df)
+```
+```{r, echo=FALSE, eval=TRUE, include=FALSE}
+library(vtable)
+```
+
+#### Figure 2: Summary Statistics
+```{r, echo = FALSE}
+sumtable(data.df[,1:6])
+```
+
+The above table shows summary statistics, including the mean and variance of each of our variables.
+
+#### Figure 3: Correlation Plot
+```{r, echo = FALSE, eval=TRUE, include=FALSE}
+library(ggcorrplot)
+```
+```{r, echo = FALSE, fig.width=4, fig.height=4}
+corr <- round(cor(data.df[,6:11]), 1)
+#head(corr[, 1:6])
+ggcorrplot(corr)
+```
+
+The above figure shows a correlation matrix for the standardized variables from the survey.  Focusing on the 'girl' variable in the correlation plot above, there does not seem to be any large correlation between a certain variable and whether or not a submariner fathered a girl.  However, in a Bayesian regression analysis that examines how each of these factors together affect the outcome, there may be different conclusions. 
+
+
+## Bayesian Regression Model 
+
+The Bayesian Regression Model will be: 
+
+$Y_i | \theta_i \sim Bern(\theta_i)$
+
+$log(\frac{\theta_i}{1-\theta_i}) = \beta_0 + \beta_1sea + \beta_2BN + \beta_3engineering + \beta_4weaps + \beta_5serviceyears$
+
+$\beta_k \sim N(0, 1$, where $k = 1,2,3,4,5$
+
+$\beta_0$ represents the baseline log odds that a submariner with 0 years of service and none of the other indicators will father a girl.  
+
+$\beta_1$ represents the change from the baseline in log odds that a submariner would father a girl if he is currently working on a submarine. 
+
+$\beta_2$ represents the change from the baseline log odds that a submariner would father a girl if he is currently assigned to/his most recent assignment was on a ballistic missile submarine.  
+
+$\beta_3$ represents the change from the baseline log odds that a submariner would father a girl if he is currently working with/worked with on his last assignment a nuclear reactor. 
+
+$\beta_4$ represents the change from the baseline log odds that a submariner would father a girl if he is currently working with/worked directly with on his last assignment nuclear weapons. 
+
+$\beta_5$ represents the change in log odds that a submariner would father a girl for each additional year of service. 
+
+
+```{r, echo=FALSE, eval=TRUE, include=FALSE}
+set.seed(23)
+library(coda)
+library(rjags)
+# model
+mydata = list(n = nrow(data.df), sea = data.df[,8], BN = data.df[,9], engineering = data.df[,10], weaps = data.df[,11], time_in_service = data.df[,7], girl = data.df[,6])
+
+myinit = list(beta0 = 0, beta1=0, beta2=0, beta3=0, beta4=0, beta5=0)
+
+nadapt = 5000
+niters = 15000
+nburns = 5000
+
+
+mod = "model {
+# likelihood 
+for (i in 1:n) {
+  girl[i] ~ dbern(theta[i])
+  logit(theta[i]) = beta0 + beta1*sea[i] + beta2*BN[i] + beta3*engineering[i] + beta4*weaps[i] + beta5*time_in_service[i] 
+  }
+
+  # priors 
+  beta0 ~ dnorm(0, 1)
+  beta1 ~ dnorm(0, 1)
+  beta2 ~ dnorm(0, 1)
+  beta3 ~ dnorm(0, 1)
+  beta4 ~ dnorm(0, 1)
+  beta5 ~ dnorm(0, 1)  
+  
+
+}"
+
+fit = jags.model(textConnection(mod),
+                 data = mydata, inits = myinit, n.adapt = nadapt)
+fit.samples = coda.samples(fit, c("beta0", "beta1", "beta2", "beta3", "beta4", "beta5"), n.iter = niters)
+
+```
+```{r, echo=FALSE, eval=TRUE, include=FALSE}
+fit.samples.mcmc <- as.mcmc(fit.samples)
+samples.df <- as.data.frame(fit.samples.mcmc)
+```
+```{r, echo=FALSE}
+summary(fit.samples.mcmc, quantiles = FALSE)
+```
+The model above specifies a Bayesian regression where each coefficient is a random variable from a normal distribution.  The coefficients have prior distributions N(0,1), as this is a generally appropriate prior for variables on a standardized scale. Whether a sailor has a girl is represented by a Bernoulli($\theta$) distribution, where $\theta$ represents the probability of fathering a girl. I ran my model for 15,000 iterations, with a burn in period of 5,000 iterations as to maximize effective sample size. Trace plots indicated convergence and ACF plots indicated that autocorrelation decreased rapidly, pointing to an effective model (diagnostic figures can be found in Appendix). 
+
+## Analysis and Conclusions
+```{r, echo=FALSE, eval=TRUE, include=FALSE}
+
+RegressionModel <- function(x1, x2, x3, x4, x5){
+  # standardize variables 
+  x1 <- (x1 - mean(data.df$sea)) / sd(data.df$sea)
+  x2 <- (x2 - mean(data.df$BN)) / sd(data.df$BN)
+  x3 <- (x3 - mean(data.df$engineering)) / sd(data.df$engineering)
+  x4 <- (x4 - mean(data.df$weaps)) / sd(data.df$weaps)
+  x5 <- (x5 - mean(data.df$time_in_service)) / sd(data.df$time_in_service)
+
+  logitvec <- samples.df$beta0 + samples.df$beta1 * x1 + samples.df$beta2 * x2 + samples.df$beta3 * x3 + samples.df$beta4 * x4 + samples.df$beta5 * x5
+  thetavec <- plogis(logitvec)
+  return(thetavec)
+}
+```
+
+#### Baseline probability distribution of fathering a girl.
+```{r, echo=FALSE, fig.width=5, fig.height=4}
+# Baseline 
+example1 <- RegressionModel(0,0,0,0,0)
+#print(paste("The baseline mean probability of fathering a girl is",mean(example1)))
+#print(paste("The baseline variance of fathering a girl is", var(example1)))
+plot(density(example1), main = "Density of Baseline Probability of\nFathering a Girl")
+```
+
+The probability of a submariner with 0 years of experience and who answered "no" to each of the other questions on the survey fathering a girl is 53.16%.  
+
+#### Examing the effects of each variable on the probability of fathering a girl
+
+```{r,echo=FALSE, eval=TRUE, include=FALSE}
+#### Testing the Effects of being Actively Assigned to a Vessel
+# Model Person 1 
+example2 <- RegressionModel(0,0,0,0,6)
+
+# Model Person 2
+example3 <- RegressionModel(1,0,0,0,6)
+
+#### Testing the effects of working on a vessel with ballistic missiles
+example4 <- RegressionModel(0,1,0,0,6)
+
+#### Testing the effects of working directly with nuclear engines
+example5 <- RegressionModel(0,0,1,0,6)
+
+#### Testing the effects of working with nuclear weapons 
+example6 <- RegressionModel(0,0,0,1,6)
+
+#### Testing the effects of time in service 
+example7 <- RegressionModel(0,0,0,0,1)
+example8 <- RegressionModel(0,0,0,0,16)
+
+```
+
+```{r, fig.show="asis", fig.width=7, fig.height=7, echo=FALSE}
+par(mfrow=c(3,2))
+# plots 
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n Sumbariners Assigned to a Vessel vs. Not", col = "blue")
+lines(density(example3), col = "red")
+legend("bottomright", legend = c("Baseline", "Actively Assigned"), col = c("blue", "red"), lty = 1)
+
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working on Ballistic Missile Ships vs. Not", col = "blue")
+lines(density(example4), col = "red")
+legend("bottomright", legend = c("Baseline", "Ballistic Missile Ship"), col = c("blue", "red"), lty = 1)
+
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working with Nuclear Reactorss vs. Not", col = "blue")
+lines(density(example5), col = "red")
+legend("bottomright", legend = c("Baseline", "Nuclear Engines"), col = c("blue", "red"), lty = 1)
+
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working with Nuclear Weapons", col = "blue")
+lines(density(example6), col = "red")
+legend("bottomright", legend = c("Baseline", "Nuclear Weapons"), col = c("blue", "red"), lty = 1)
+
+plot(density(example7), main = "Probability Distribution of Fathering a Girl\n Based on Time In Service", col = "blue")
+lines(density(example8), col = "red")
+legend("bottomright", legend = c("1 Year in Service (min)", "16 Years in Service (max)"), col = c("blue", "red"), lty = 1)
+```
+
+The plots above illustrate how the probability distribution for fathering a girl changes when one variable is changed.  Being actively assigned to a vessel and having more years in service appear to increase the probability of having a daughter, while exposure to radiation (ballistic missile ships, nuclear weapons, nuclear engines) seems to decrease the probability of having a daughter.  The means and variances of each of these theoretical distributions can be found in the Appendix.  Furthermore, two-sided t-tests were performed for each plot (baseline vs actively assigned, etc) to test the difference in mean probabilities of fathering a girl for each combination of predictor variables above.  Each t-test showed a significant difference in means, and can be found in the 'Analysis Code' section of the appendix. This indicates that our coefficient values are in fact different from zero.  Overall, though each of these factors seem to impact the probability of fathering a girl, they do not necessarily increase a submariner's chances of having a daughter.  
+
+## Appendix
+
+### Extra Exploratory Analysis
+
+#### Traditional Linear Regression Model 
+```{r}
+linreg <- lm(girl ~ sea + BN + engineering + weaps + time_in_service, data = data.df)
+summary(linreg)
+```
+
+### Model Code
+```{r, echo=TRUE, eval=FALSE}
+set.seed(23)
+library(coda)
+library(rjags)
+# model
+mydata = list(n = nrow(data.df), sea = data.df[,8], BN = data.df[,9], engineering = data.df[,10], weaps = data.df[,11], time_in_service = data.df[,7], girl = data.df[,6])
+
+myinit = list(beta0 = 0, beta1=0, beta2=0, beta3=0, beta4=0, beta5=0)
+
+nadapt = 5000
+niters = 15000
+nburns = 5000
+
+
+mod = "model {
+# likelihood 
+for (i in 1:n) {
+  girl[i] ~ dbern(theta[i])
+  logit(theta[i]) = beta0 + beta1*sea[i] + beta2*BN[i] + beta3*engineering[i] + beta4*weaps[i] + beta5*time_in_service[i] 
+  }
+
+  # priors 
+  beta0 ~ dnorm(0, 1)
+  beta1 ~ dnorm(0, 1)
+  beta2 ~ dnorm(0, 1)
+  beta3 ~ dnorm(0, 1)
+  beta4 ~ dnorm(0, 1)
+  beta5 ~ dnorm(0, 1)  
+  
+
+}"
+
+fit = jags.model(textConnection(mod),
+                 data = mydata, inits = myinit, n.adapt = nadapt)
+fit.samples = coda.samples(fit, c("beta0", "beta1", "beta2", "beta3", "beta4", "beta5"), n.iter = niters)
+
+```
+```{r, echo=FALSE, eval=FALSE}
+fit.samples.mcmc <- as.mcmc(fit.samples)
+samples.df <- as.data.frame(fit.samples.mcmc)
+```
+```{r, echo=TRUE, eval = FALSE}
+summary(fit.samples.mcmc)
+```
+
+
+### Diagnostics
+
+#### Trace Plots
+
+```{r, fig.show="asis", fig.width=7, fig.height=7}
+par(mfrow=c(3,2))
+traceplot(fit.samples.mcmc)
+```
+
+#### Density Plots 
+
+```{r, fig.show="asis", fig.width=7, fig.height=7}
+par(mfrow=c(3,2))
+# density plots
+plot(density(samples.df$beta0))
+plot(density(samples.df$beta1))
+plot(density(samples.df$beta2))
+plot(density(samples.df$beta3))
+plot(density(samples.df$beta4))
+plot(density(samples.df$beta5))
+```
+
+#### Effective Sample Size
+
+```{r}
+effectiveSize(samples.df$beta0)
+effectiveSize(samples.df$beta1)
+effectiveSize(samples.df$beta2)
+effectiveSize(samples.df$beta3)
+effectiveSize(samples.df$beta4)
+effectiveSize(samples.df$beta5)
+```
+
+#### ACF Plots
+
+```{r, fig.show="asis", fig.width=7, fig.height=7}
+par(mfrow=c(3,2))
+acf(samples.df$beta0)
+acf(samples.df$beta1)
+acf(samples.df$beta2)
+acf(samples.df$beta3)
+acf(samples.df$beta4)
+acf(samples.df$beta5)
+```
+
+### Regression Function Code
+```{r, echo=TRUE, eval=FALSE}
+
+RegressionModel <- function(x1, x2, x3, x4, x5){
+  # standardize variables 
+  x1 <- (x1 - mean(data.df$sea)) / sd(data.df$sea)
+  x2 <- (x2 - mean(data.df$BN)) / sd(data.df$BN)
+  x3 <- (x3 - mean(data.df$engineering)) / sd(data.df$engineering)
+  x4 <- (x4 - mean(data.df$weaps)) / sd(data.df$weaps)
+  x5 <- (x5 - mean(data.df$time_in_service)) / sd(data.df$time_in_service)
+
+  logitvec <- samples.df$beta0 + samples.df$beta1 * x1 + samples.df$beta2 * x2 + samples.df$beta3 * x3 + samples.df$beta4 * x4 + samples.df$beta5 * x5
+  thetavec <- plogis(logitvec)
+ return(thetavec)
+}
+```
+
+### Analysis Code
+#### Testing the effects of being assigned to a vessel
+```{r}
+# Baseline 
+example1 <- RegressionModel(0,0,0,0,0)
+print(paste("The baseline mean probability of fathering a girl is",mean(example1)))
+print(paste("The baseline variance of fathering a girl is", var(example1)))
+plot(density(example1), main = "Density of Baseline Probability of Fathering a Girl")
+```
+
+#### Teting the Effects of being Actively Assigned to a Vessel
+```{r}
+# Model Person 1 
+example2 <- RegressionModel(0,0,0,0,6)
+mean(example2)
+var(example2)
+
+# Model Person 2
+example3 <- RegressionModel(1,0,0,0,6)
+mean(example3)
+var(example3)
+
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n Sumbariners Assigned to a Vessel vs. Not", col = "blue")
+lines(density(example3), col = "red")
+legend("topright", legend = c("Baseline", "Actively Assigned"), col = c("blue", "red"), lty = 1)
+
+t.test(example2, example3)
+```
+
+#### Testing the effects of working on a vessel with ballistic missiles
+```{r}
+example4 <- RegressionModel(0,1,0,0,6)
+mean(example4)
+var(example4)
+
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working on Ballistic Missile Ships vs. Not", col = "blue")
+lines(density(example4), col = "red")
+legend("topright", legend = c("Baseline", "Ballistic Missile Ship"), col = c("blue", "red"), lty = 1)
+
+t.test(example2, example4)
+```
+
+#### Testing the effects of working directly with nuclear engines
+```{r}
+example5 <- RegressionModel(0,0,1,0,6)
+mean(example5)
+var(example5)
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working with Nuclear Engines vs. Not", col = "blue")
+lines(density(example5), col = "red")
+legend("topright", legend = c("Baseline", "Nuclear Engines"), col = c("blue", "red"), lty = 1)
+
+t.test(example2, example5)
+```
+
+#### Testing the effects of working with nuclear weapons 
+```{r}
+example6 <- RegressionModel(0,0,0,1,6)
+mean(example6)
+var(example6)
+plot(density(example2), main = "Probability Distribution of Fathering a Girl\n For those Working with Nuclear Weapons", col = "blue")
+lines(density(example6), col = "red")
+legend("topright", legend = c("Baseline", "Nuclear Weapons"), col = c("blue", "red"), lty = 1)
+
+t.test(example2, example6)
+```
+
+#### Testing the effects of time in service 
+```{r}
+# min time in service 
+example7 <- RegressionModel(0,0,0,0,1)
+mean(example7)
+var(example7)
+
+#max time in service
+example8 <- RegressionModel(0,0,0,0,16)
+mean(example8)
+var(example8)
+
+plot(density(example7), main = "Probability Distribution of Fathering a Girl\n Based on Time In Service", col = "blue")
+lines(density(example8), col = "red")
+legend("topright", legend = c("1 Year in Se4rvice (min)", "16 Years in Service (max)"), col = c("blue", "red"), lty = 1)
+
+t.test(example7, example8)
+```
